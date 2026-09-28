@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 DATA_PATH = Path(__file__).parent / "predictions.json"
+REPORT_PATH = Path(__file__).parent / "model_report.json"
 
 # model/train.py holds out 20% of the rows with train_test_split(random_state=42).
 # The split depends only on the row count, so we can tell which listings the
@@ -29,7 +30,7 @@ CARD_BG = {"vcheap": "#EAF6F4", "below": "#F2F9F8", "fair": "#FFFFFF", "above": 
 PILL = {"vcheap": ("#0B7A75", "#FFFFFF"), "below": ("#CFEAE7", "#0B5D63"),
         "fair": ("#E4E9ED", "#33424F"), "above": ("#F3D6D2", "#8E2F27")}
 # Dots on the dark hero band, lighter than the chart colors so they stay visible
-HERO_DOT = {"total": "#FFFFFF", "vcheap": "#5FD4C8", "below": "#BFE3DF", "above": "#E58C82"}
+HERO_DOT = {"total": "#FFFFFF", "vcheap": "#5FD4C8", "below": "#BFE3DF", "near": "#9FB0BD", "above": "#E58C82"}
 TEAL_SCALE = ["#D6EEEB", "#6DBBB4", "#0B7A75", "#08343B"]
 TEXT_COLOR = {"vcheap": "#0B7A75", "below": "#0B7A75", "fair": INK, "above": "#B4463C"}
 VERDICT_ORDER = ["vcheap", "below", "fair", "above"]
@@ -49,12 +50,35 @@ AREA_NAMES = {
     "avtovagzal": "Avtovağzal", "xezer": "Xəzər",
 }
 
+FEATURE_LABELS = {
+    "area_m2": {"AZ": "Sahə", "EN": "Area (m²)"},
+    "location_level_2": {"AZ": "Ərazi / metro", "EN": "Area / metro"},
+    "total_floors": {"AZ": "Binanın mərtəbə sayı", "EN": "Floors in the building"},
+    "city": {"AZ": "Şəhər", "EN": "City"},
+    "location_level_3": {"AZ": "Qəsəbə", "EN": "Settlement"},
+    "photo_count": {"AZ": "Şəkil sayı", "EN": "Number of photos"},
+    "rooms": {"AZ": "Otaq sayı", "EN": "Rooms"},
+    "has_repair": {"AZ": "Təmir", "EN": "Renovation"},
+    "is_top_floor": {"AZ": "Son mərtəbə", "EN": "Top floor"},
+    "floor": {"AZ": "Mərtəbə", "EN": "Floor"},
+    "description_has_furnished": {"AZ": "Elanda “mebelli” qeydi", "EN": "“Furnished” in description"},
+    "property_type": {"AZ": "Bina növü (yeni/köhnə)", "EN": "Building type (new/old)"},
+    "has_kupca": {"AZ": "Kupça", "EN": "Title document (kupça)"},
+    "has_mortgage": {"AZ": "İpoteka", "EN": "Mortgage eligible"},
+    "description_has_parking": {"AZ": "Elanda “parkinq” qeydi", "EN": "“Parking” in description"},
+    "is_first_floor": {"AZ": "1-ci mərtəbə", "EN": "First floor"},
+}
+LOCATION_KEYS = ["city", "location_level_2", "location_level_3"]
+BAND_EDGES = [0, 100_000, 200_000, 400_000, float("inf")]
+BAND_LABELS = ["<100k", "100–200k", "200–400k", "400k+"]
+
 STR = {
     "AZ": {
         "tagline": "Bakıda bazar qiymətindən ucuz satılan mənzilləri tapın.",
         "stat_total": "elan təhlil olunub",
         "stat_vc": "çox ucuz (15%+)",
         "stat_bm": "ucuz (10–15%)",
+        "stat_nm": "bazara yaxın (±10%)",
         "stat_ab": "bahalı (10%+)",
         "badge_vcheap": "Çox ucuz", "badge_below": "Ucuz",
         "badge_fair": "Bazar səviyyəsində", "badge_above": "Bahalı",
@@ -77,7 +101,7 @@ STR = {
         "seen_yes": "Model bu elanı öyrənmə zamanı görüb, ona görə proqnoz olduğundan dəqiq görünə bilər.",
         "open": "Bina.az-da aç",
         "filters": "Filtrlər",
-        "f_sub": "Aşağıdakı cədvəl və qrafiklərə tətbiq olunur.",
+        "f_sub": "Ən sərfəli elanlar, Paylanma və Ərazilər bölmələrinə tətbiq olunur.",
         "f_count": "elan filtrlərə uyğundur",
         "f_reset": "Filtrləri sıfırla",
         "f_area": ":material/location_on: Ərazi",
@@ -111,12 +135,34 @@ STR = {
         "area_none": "Ərazi qrafiki üçün hər ərazidə ən azı {k} elan lazımdır. Filtrləri genişləndirin.",
         "footer": "Holberton School kapstoun layihəsi. Məlumat Bina.az-dan yığılmış elanların statik nüsxəsidir, elan artıq silinmiş və ya qiyməti dəyişmiş ola bilər. Ucuzluq = (model proqnozu − elan qiyməti) / model proqnozu × 100.",
         "unit_sqm": "AZN/m²",
+        "tab_model": "Modelin dəqiqliyi",
+        "m_intro": "Bu göstəricilər modelin öyrənmə zamanı heç görmədiyi {n} elan üzrə hesablanıb, ona görə real dəqiqliyi göstərir. Bölmə filtrlərdən asılı deyil.",
+        "k_median": "Median xəta", "k_median_s": "elanların yarısında model bundan az yanılır",
+        "k_w10": "±10% daxilində", "k_w10_s": "model qiyməti elan qiymətindən ən çox 10% fərqlənən elanların payı",
+        "k_w20": "±20% daxilində", "k_w20_s": "eyni göstərici 20% üçün",
+        "k_mean": "Orta xəta", "k_mean_s": "böyük səhvlər ortanı yuxarı çəkir",
+        "m_table": "Standart göstəricilər",
+        "m_col_metric": "Göstərici",
+        "m_col_cap": "Qiymətlər {cap} AZN-də kəsilib (təlim skripti)",
+        "m_col_raw": "Elan qiymətləri olduğu kimi",
+        "m_mae": "Orta mütləq xəta, AZN (MAE)", "m_rmse": "Kök orta kvadrat xəta, AZN (RMSE)", "m_r2": "R²",
+        "m_cap_note": "Təlim skripti ən bahalı 1% elanın qiymətini ({cap} AZN-dən yuxarı) kəsib sonra qiymətləndirir. Real qiymətlərdə bu bahalı mənzillər RMSE və R²-yə güclü təsir edir, ona görə həmin iki göstərici pis görünür. Faiz xətaları isə demək olar dəyişmir.",
+        "m_scatter": "Model qiyməti ilə elan qiyməti, modelin görmədiyi elanlar",
+        "m_band": "Qiymət aralığına görə median xəta",
+        "m_band_x": "Elan qiyməti (AZN)", "m_band_y": "Median xəta (%)",
+        "m_band_note": "{edge} AZN-dən bahalı elanlarda median xəta {hi}, ondan ucuzlarda isə {lo}. Model bahalı mənzillərdə daha az etibarlıdır.",
+        "m_seen_note": "Öyrənmə zamanı gördüyü elanlarda median xəta {tr}, görmədiyi elanlarda {te}. Fərq modelin gördüyü elanlara bir az yaxşı uyğunlaşdığını göstərir, bu normaldır.",
+        "m_feat": "Qiymətə ən çox təsir edən amillər", "m_feat_x": "Təsir payı (%)",
+        "m_feat_note": "Sahənin payı {a}, yerin payı (şəhər, ərazi, qəsəbə) {l}, qalan bütün amillərin payı isə cəmi {r}-dir.",
+        "m_model": "CatBoost reqressoru {ntr} elan üzərində öyrədilib, {k} əlamətdən istifadə edir və qiymətin loqarifmini proqnozlaşdırır.",
+        "m_none": "Modelin görmədiyi elanlar müəyyən edilə bilmədi, ona görə bu bölmə göstərilmir.",
     },
     "EN": {
         "tagline": "Find apartments in Baku that are listed below their market price.",
         "stat_total": "listings analysed",
         "stat_vc": "very cheap (15%+)",
         "stat_bm": "cheap (10–15%)",
+        "stat_nm": "near market (±10%)",
         "stat_ab": "above market (10%+)",
         "badge_vcheap": "Very cheap", "badge_below": "Cheap",
         "badge_fair": "Near market", "badge_above": "Above market",
@@ -139,7 +185,7 @@ STR = {
         "seen_yes": "The model saw this listing during training, so its prediction may look more accurate than it really is.",
         "open": "Open on Bina.az",
         "filters": "Filters",
-        "f_sub": "Applies to the table and charts below.",
+        "f_sub": "Applies to the Best deals, Distribution and Areas tabs.",
         "f_count": "listings match your filters",
         "f_reset": "Reset filters",
         "f_area": ":material/location_on: Area",
@@ -173,6 +219,27 @@ STR = {
         "area_none": "The area charts need at least {k} listings per area. Widen the filters.",
         "footer": "Holberton School capstone project. The data is a static copy of Bina.az listings, so a listing may since have been removed or repriced. Discount = (model price − listed price) / model price × 100.",
         "unit_sqm": "AZN/m²",
+        "tab_model": "Model accuracy",
+        "m_intro": "These figures use the {n} listings the model never saw during training, so they show its real accuracy. This tab does not depend on the filters.",
+        "k_median": "Median error", "k_median_s": "half of the listings are missed by less than this",
+        "k_w10": "Within ±10%", "k_w10_s": "share of listings where the model is at most 10% away from the listed price",
+        "k_w20": "Within ±20%", "k_w20_s": "the same measure at 20%",
+        "k_mean": "Mean error", "k_mean_s": "large misses pull the average up",
+        "m_table": "Standard metrics",
+        "m_col_metric": "Metric",
+        "m_col_cap": "Prices capped at {cap} AZN (training script)",
+        "m_col_raw": "Listed prices as they are",
+        "m_mae": "Mean absolute error, AZN (MAE)", "m_rmse": "Root mean squared error, AZN (RMSE)", "m_r2": "R²",
+        "m_cap_note": "The training script caps the priciest 1% of listings (above {cap} AZN) before scoring. With real prices those flats weigh heavily in RMSE and R², so those two look worse. The percentage errors barely change.",
+        "m_scatter": "Model price vs listed price, unseen listings",
+        "m_band": "Median error by price band",
+        "m_band_x": "Listed price (AZN)", "m_band_y": "Median error (%)",
+        "m_band_note": "Above {edge} AZN the median error is {hi}, below it {lo}. The model is less reliable on expensive flats.",
+        "m_seen_note": "On listings it studied the median error is {tr}; on unseen ones {te}. The gap shows the model fits the listings it studied a little better, which is expected.",
+        "m_feat": "What drives the predicted price the most", "m_feat_x": "Share of influence (%)",
+        "m_feat_note": "Area accounts for {a}, location (city, area, settlement) for {l}, and all other factors together for only {r}.",
+        "m_model": "CatBoost regressor trained on {ntr} listings, using {k} features, predicting the logarithm of the price.",
+        "m_none": "The listings the model has not seen could not be identified, so this tab is unavailable.",
     },
 }
 
@@ -194,6 +261,9 @@ st.markdown(
 .lq-stat b{display:block;font-size:1.7rem;font-weight:600;letter-spacing:-.01em;line-height:1.1;color:#FFFFFF}
 .lq-stat span{display:flex;align-items:center;gap:.45rem;font-size:.85rem;color:#E3F3F1;margin-top:.3rem}
 .lq-stat i{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;flex:none}
+.lq-stat b em{font-style:normal;font-size:.95rem;font-weight:500;letter-spacing:0;color:#BFE3DF;margin-left:.5rem}
+.lq-mix{position:relative;z-index:1;display:flex;gap:2px;height:8px;border-radius:4px;overflow:hidden;margin-top:1.15rem}
+.lq-mix i{display:block;height:100%}
 .lq-result{border-radius:12px;padding:1.5rem 1.7rem 1.4rem;margin:1.1rem 0 .6rem;color:#14202B;border:1px solid #D5DCE2;border-top-width:5px}
 .lq-result p{color:#14202B;margin:0}
 .lq-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}
@@ -227,6 +297,13 @@ button[data-baseweb="tab"] p{font-size:1.02rem;font-weight:500}
 .lq-count p.lq-count-lab{color:#E3F3F1;font-size:.88rem;margin-top:.4rem}
 .lq-count-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.18);margin-top:.85rem;overflow:hidden}
 .lq-count-bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#5FD4C8,#BFE3DF)}
+.lq-kpis,.lq-kpis *{font-family:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif}
+.lq-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(11.5rem,1fr));gap:.8rem;margin:.6rem 0 1.1rem}
+.lq-kpi{background:#FFFFFF;border:1px solid #D5DCE2;border-top-width:4px;border-radius:12px;padding:.95rem 1.05rem 1rem}
+.lq-kpi b{display:block;color:#14202B;font-size:2rem;font-weight:700;letter-spacing:-.02em;line-height:1.05}
+.lq-kpi p{margin:0}
+.lq-kpi p.lq-kpi-l{color:#14202B;font-size:.95rem;font-weight:600;margin-top:.45rem}
+.lq-kpi p.lq-kpi-s{color:#5B6B78;font-size:.82rem;line-height:1.35;margin-top:.2rem}
 .st-key-reset_box{margin-top:.8rem}
 .st-key-card_where,.st-key-card_price,.st-key-card_model{background:#FFFFFF;border:1px solid #BCD8D3;border-radius:12px;padding:.95rem 1rem .6rem}
 .st-key-card_where [data-baseweb="select"]>div{background:#F1F7F6;border-radius:10px}
@@ -285,6 +362,20 @@ def load_data():
     df["verdict"] = df["bargain_score"].map(verdict_of)
     df["ape"] = (df["predicted_price"] - df["actual_price"]).abs() / df["actual_price"] * 100
     return df, split_ok
+
+
+@st.cache_data(show_spinner=False)
+def load_report():
+    if not REPORT_PATH.exists():
+        return None
+    return json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+
+
+def kpi(value, label, sub, shade):
+    return (
+        f'<div class="lq-kpi" style="border-top-color:{shade}"><b>{value}</b>'
+        f'<p class="lq-kpi-l">{label}</p><p class="lq-kpi-s">{sub}</p></div>'
+    )
 
 
 def parse_id(text):
@@ -377,6 +468,7 @@ def chart_layout(fig, height=340):
 
 # ---------------------------------------------------------------- data + sidebar
 df, split_ok = load_data()
+report = load_report()
 n_held = int(df["held_out"].sum())
 
 # Price slider works in thousands of AZN so its ends read "45k" and "2500k".
@@ -430,13 +522,16 @@ with count_slot:
         st.button(t("f_reset"), on_click=reset_filters, disabled=not filters_active, key="f_reset", width="stretch")
 
 # ---------------------------------------------------------------- hero
-n_vc = int((df["bargain_score"] >= 15).sum())
-n_bm = int(((df["bargain_score"] >= 10) & (df["bargain_score"] < 15)).sum())
-n_ab = int((df["bargain_score"] <= -10).sum())
+_mix = df["verdict"].value_counts()  # same grouping the charts use, so the four groups always add up
+n_vc, n_bm, n_nm, n_ab = (int(_mix.get(k, 0)) for k in VERDICT_ORDER)
 
 
-def stat(number, key, dot):
-    return f'<div class="lq-stat"><b>{fnum(number)}</b><span><i style="background:{HERO_DOT[dot]}"></i>{t(key)}</span></div>'
+def stat(number, key, dot, share=None):
+    pct = f"<em>{fpct(share)}</em>" if share is not None else ""
+    return (
+        f'<div class="lq-stat"><b>{fnum(number)}{pct}</b>'
+        f'<span><i style="background:{HERO_DOT[dot]}"></i>{t(key)}</span></div>'
+    )
 
 
 st.markdown(
@@ -445,9 +540,16 @@ st.markdown(
     f'<p class="lq-hero-tag">{t("tagline")}</p>'
     '<div class="lq-stats">'
     + stat(len(df), "stat_total", "total")
-    + stat(n_vc, "stat_vc", "vcheap")
-    + stat(n_bm, "stat_bm", "below")
-    + stat(n_ab, "stat_ab", "above")
+    + stat(n_vc, "stat_vc", "vcheap", n_vc / len(df) * 100)
+    + stat(n_bm, "stat_bm", "below", n_bm / len(df) * 100)
+    + stat(n_nm, "stat_nm", "near", n_nm / len(df) * 100)
+    + stat(n_ab, "stat_ab", "above", n_ab / len(df) * 100)
+    + "</div>"
+    + '<div class="lq-mix">'
+    + "".join(
+        f'<i style="flex:{n} 1 0;background:{HERO_DOT[d]}"></i>'
+        for n, d in [(n_vc, "vcheap"), (n_bm, "below"), (n_nm, "near"), (n_ab, "above")]
+    )
     + "</div></div>",
     unsafe_allow_html=True,
 )
@@ -489,7 +591,9 @@ else:
 st.write("")
 
 # ---------------------------------------------------------------- tabs
-tab_deals, tab_dist, tab_areas = st.tabs([t("tab_deals"), t("tab_dist"), t("tab_areas")])
+tab_deals, tab_dist, tab_areas, tab_model = st.tabs(
+    [t("tab_deals"), t("tab_dist"), t("tab_areas"), t("tab_model")]
+)
 cat_label = {k: t(f"cat_{k}") for k in VERDICT_ORDER}
 cat_color = {cat_label[k]: COLOR[k] for k in VERDICT_ORDER}
 
@@ -606,5 +710,113 @@ with tab_areas:
             f2.update_xaxes(range=[0, float(grp["share"].max()) * 1.3])
             f2.update_layout(xaxis_title=t("x_share"), yaxis_title="")
             st.plotly_chart(chart_layout(f2, h), width="stretch")
+
+
+with tab_model:
+    if not split_ok:
+        st.info(t("m_none"))
+    else:
+        held, seen = df[df["held_out"]], df[~df["held_out"]]
+        cap = float(df["actual_price"].quantile(0.99))  # train.py caps the top 1% of prices before scoring
+        err_raw = held["predicted_price"] - held["actual_price"]
+        y_cap = held["actual_price"].clip(upper=cap)
+        err_cap = held["predicted_price"] - y_cap
+
+        def r2_of(err, y):
+            return 1 - float((err ** 2).sum()) / float(((y - y.mean()) ** 2).sum())
+
+        st.caption(t("m_intro", n=n_held))
+        st.markdown(
+            '<div class="lq-kpis">'
+            + kpi(fpct(held["ape"].median()), t("k_median"), t("k_median_s"), "#08343B")
+            + kpi(fpct((held["ape"] <= 10).mean() * 100), t("k_w10"), t("k_w10_s"), "#0B5D63")
+            + kpi(fpct((held["ape"] <= 20).mean() * 100), t("k_w20"), t("k_w20_s"), "#0B7A75")
+            + kpi(fpct(held["ape"].mean()), t("k_mean"), t("k_mean_s"), "#6DBBB4")
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+        left, right = st.columns(2)
+        with left:
+            st.markdown(f"**{t('m_scatter')}**")
+            ph = held.copy()
+            ph["hover"] = (
+                ph["area_name"] + "<br>"
+                + ph["rooms"].astype(int).astype(str) + " / " + ph["area"].round(0).astype(int).astype(str) + " m²<br>"
+                + ph["actual_price"].map(fnum) + " → " + ph["predicted_price"].map(fnum) + " AZN<br>"
+                + ph["ape"].map(lambda v: fpct(v))
+            )
+            lo = float(min(ph["actual_price"].min(), ph["predicted_price"].min()))
+            hi = float(max(ph["actual_price"].max(), ph["predicted_price"].max()))
+            ticks, labels = price_ticks(lo, hi)
+            fig_m = go.Figure()
+            fig_m.add_trace(go.Scatter(
+                x=ph["actual_price"], y=ph["predicted_price"], mode="markers", customdata=ph[["hover"]],
+                hovertemplate="%{customdata[0]}<extra></extra>", showlegend=False,
+                marker=dict(size=7, color=COLOR["vcheap"], opacity=0.7),
+            ))
+            fig_m.add_trace(go.Scatter(
+                x=[lo, hi], y=[lo, hi], mode="lines", name=t("equal"), hoverinfo="skip",
+                line=dict(color=MUTED, width=1, dash="dot"), showlegend=False,
+            ))
+            fig_m.update_xaxes(type="log", tickmode="array", tickvals=ticks, ticktext=labels,
+                               range=[math.log10(lo * 0.9), math.log10(hi * 1.1)], title=t("x_price"))
+            fig_m.update_yaxes(type="log", tickmode="array", tickvals=ticks, ticktext=labels,
+                               range=[math.log10(lo * 0.9), math.log10(hi * 1.1)], title=t("y_pred"))
+            st.plotly_chart(chart_layout(fig_m), width="stretch")
+        with right:
+            st.markdown(f"**{t('m_band')}**")
+            banded = held.assign(band=pd.cut(held["actual_price"], bins=BAND_EDGES, labels=BAND_LABELS, right=False))
+            g = banded.groupby("band", observed=True)["ape"].agg(med="median", n="size").reset_index()
+            g["band"] = g["band"].astype(str)
+            g["label"] = [f"{fnum(m, 1)}% (n={int(n_)})" for m, n_ in zip(g["med"], g["n"])]
+            fig_b = px.bar(g, x="band", y="med", text="label", color="med", color_continuous_scale=TEAL_SCALE,
+                           category_orders={"band": BAND_LABELS})
+            fig_b.update_traces(textposition="outside", cliponaxis=False)
+            fig_b.update_coloraxes(showscale=False)
+            fig_b.update_yaxes(range=[0, float(g["med"].max()) * 1.3])
+            fig_b.update_layout(xaxis_title=t("m_band_x"), yaxis_title=t("m_band_y"))
+            st.plotly_chart(chart_layout(fig_b), width="stretch")
+        edge = BAND_EDGES[-2]
+        st.caption(t(
+            "m_band_note", edge=fnum(edge),
+            hi=fpct(held.loc[held["actual_price"] >= edge, "ape"].median()),
+            lo=fpct(held.loc[held["actual_price"] < edge, "ape"].median()),
+        ))
+        st.caption(t("m_seen_note", tr=fpct(seen["ape"].median()), te=fpct(held["ape"].median())))
+
+        st.markdown(f"**{t('m_table')}**")
+        table_m = pd.DataFrame({
+            t("m_col_metric"): [t("m_mae"), t("m_rmse"), t("m_r2")],
+            t("m_col_cap", cap=fnum(cap)): [
+                fnum(err_cap.abs().mean()), fnum(math.sqrt(float((err_cap ** 2).mean()))), fnum(r2_of(err_cap, y_cap), 3)],
+            t("m_col_raw"): [
+                fnum(err_raw.abs().mean()), fnum(math.sqrt(float((err_raw ** 2).mean()))),
+                fnum(r2_of(err_raw, held["actual_price"]), 3)],
+        })
+        st.dataframe(table_m, hide_index=True, width="stretch")
+        st.caption(t("m_cap_note", cap=fnum(cap)))
+
+        if report:
+            imp = pd.Series(report["importance"], dtype=float)
+            imp = imp / imp.sum() * 100
+            top = imp.sort_values(ascending=False).head(10)
+            fdat = pd.DataFrame({
+                "feature": [FEATURE_LABELS.get(k, {}).get(L, k) for k in top.index],
+                "share": top.values,
+            })
+            fdat["label"] = [fpct(v) for v in fdat["share"]]
+            st.markdown(f"**{t('m_feat')}**")
+            fig_f = px.bar(fdat.sort_values("share"), x="share", y="feature", orientation="h", text="label",
+                           color="share", color_continuous_scale=TEAL_SCALE)
+            fig_f.update_traces(textposition="outside", cliponaxis=False)
+            fig_f.update_coloraxes(showscale=False)
+            fig_f.update_xaxes(range=[0, float(fdat["share"].max()) * 1.2])
+            fig_f.update_layout(xaxis_title=t("m_feat_x"), yaxis_title="")
+            st.plotly_chart(chart_layout(fig_f, 380), width="stretch")
+            a = float(imp.get("area_m2", 0))
+            loc = float(imp.reindex(LOCATION_KEYS).fillna(0).sum())
+            st.caption(t("m_feat_note", a=fpct(a), l=fpct(loc), r=fpct(100 - a - loc)))
+            st.caption(t("m_model", ntr=report.get("n_train", "?"), k=report.get("n_features", "?")))
 
 st.caption(t("footer"))
